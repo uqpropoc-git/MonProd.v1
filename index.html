@@ -188,35 +188,40 @@
         .catch(err => console.error("Gagal mengambil Master Mapping:", err));
     };
 
-    // FIX 1: Exact Match + Longest Match Sorting untuk cegah PIT 12-11 vs PIT 12-11A tertukar
-    function resolvePITMapping(blokSeamRaw) {
-      if (!blokSeamRaw) return { ptOwner: "UNMAPPED", lokasiPit: "UNKNOWN", kodePit: "UNKNOWN", defaultSeam: "-" };
-      
-      let cleanVal = String(blokSeamRaw).trim();
-      
-      // 1. Cek Exact Match persis
-      let exact = masterMapping.find(m => m.kodePit.toLowerCase() === cleanVal.toLowerCase());
-      if (exact) return exact;
+    // FIX 1: Pemetaan PIT/Seam Akurat tanpa Merusak Nama Grup Asli
+    function resolvePITMapping(blokRaw, blokSeamRaw) {
+      let cleanBlok = String(blokRaw || "").trim();
+      let cleanSeam = String(blokSeamRaw || "").trim();
+      let combined = `${cleanBlok} ${cleanSeam}`.toUpperCase();
 
-      // 2. Sortir berdasar string terpanjang dulu (PIT 12 - 11A duluan dibanding PIT 12 - 11)
-      let sortedMaster = [...masterMapping].sort((a, b) => b.kodePit.length - a.kodePit.length);
-      let partial = sortedMaster.find(m => cleanVal.toLowerCase().includes(m.kodePit.toLowerCase()));
-      if (partial) return partial;
-
-      // Hardcoded Fallback (disortir terpanjang juga)
-      if (cleanVal.includes("OP -") || cleanVal.includes("MN -")) {
-        return { ptOwner: "PT MSA", lokasiPit: "OP - CEMARA", kodePit: cleanVal, defaultSeam: cleanVal };
-      } else if (cleanVal.includes("PIT 12 - 11A")) {
-        return { ptOwner: "PT MSA", lokasiPit: "12 - KELAP BARAT", kodePit: "PIT 12 - 11A", defaultSeam: cleanVal };
-      } else if (cleanVal.includes("PIT 12")) {
-        return { ptOwner: "PT MSA", lokasiPit: "12 - KELAP BARAT", kodePit: cleanVal, defaultSeam: cleanVal };
-      } else if (cleanVal.includes("PIT Z")) {
-        return { ptOwner: "PT WSJ", lokasiPit: "PIT Z - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
-      } else if (cleanVal.includes("S WSJ")) {
-        return { ptOwner: "PT WSJ", lokasiPit: "PIT S - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
+      // 1. Cek Exact Match pada Master Mapping
+      if (masterMapping && masterMapping.length > 0) {
+        let exact = masterMapping.find(m => m.kodePit.toLowerCase() === cleanSeam.toLowerCase());
+        if (exact) return exact;
       }
 
-      return { ptOwner: "OTHER / UNMAPPED", lokasiPit: "DYNAMIC PIT", kodePit: cleanVal, defaultSeam: cleanVal };
+      // 2. Tentukan PT Owner berdasarkan Blok & Seam
+      let owner = "PT MSA"; // Default ke MSA
+      if (combined.includes("WSJ") || combined.includes("RCI 2 WSJ") || combined.includes("S WSJ")) {
+        owner = "PT WSJ";
+      }
+
+      // 3. Tentukan Lokasi PIT
+      let lokasi = cleanSeam;
+      if (combined.includes("WSJ")) {
+        lokasi = "PIT S - WSJ";
+      } else if (combined.includes("OP -") || combined.includes("MN -")) {
+        lokasi = "OP - CEMARA";
+      } else if (combined.includes("PIT 12")) {
+        lokasi = "12 - KELAP BARAT";
+      }
+
+      return {
+        ptOwner: owner,
+        lokasiPit: lokasi,
+        kodePit: cleanSeam || cleanBlok,
+        defaultSeam: cleanSeam || "-"
+      };
     }
 
     // Helper Pembersih Nilai Netto (Cegah NaN / String Konkat)
@@ -227,16 +232,31 @@
       return parseFloat(cleaned) || 0;
     }
 
-    // FIX 2: Formatting Tanggal Lokal yang Presisi (Mencegah Bias Jam/UTC)
-    function formatDateLocal(dateObj) {
-      let d = new Date(dateObj);
-      if (isNaN(d.getTime())) return "";
-      let year = d.getFullYear();
-      let month = String(d.getMonth() + 1).padStart(2, '0');
-      let day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
+    // FIX 2: Parsing Tanggal Lokal yang Presisi (Tanpa Pergeseran Timezone/UTC)
+    function parseExcelDate(dateTimeIn, sheetName) {
+      if (!dateTimeIn) return sheetName;
+
+      if (dateTimeIn instanceof Date) {
+        let year = dateTimeIn.getFullYear();
+        let month = String(dateTimeIn.getMonth() + 1).padStart(2, '0');
+        let day = String(dateTimeIn.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+
+      if (typeof dateTimeIn === 'string') {
+        let datePart = dateTimeIn.trim().split(' ')[0].split('T')[0];
+        if (datePart.includes('-')) return datePart;
+        if (datePart.includes('/')) {
+          let p = datePart.split('/');
+          if (p[0].length === 4) return `${p[0]}-${p[1].padStart(2, '0')}-${p[2].padStart(2, '0')}`;
+          return `${p[2]}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
+        }
+      }
+
+      return sheetName;
     }
 
+    // FIX 3: Upload dan Parsing Excel
     function handleFileUpload(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -270,21 +290,15 @@
 
               let ticketNo = row[0];
               let dateTimeIn = row[1];
-              let blokSeamRaw = row[5]; 
+              let blokRaw = row[4];     // Kolom Blok
+              let blokSeamRaw = row[5]; // Kolom Blok/Seam
               let netto = cleanNettoValue(row[10]);
 
               if (netto > 0) {
-                let dateStr = "";
-                if (dateTimeIn instanceof Date) {
-                  dateStr = formatDateLocal(dateTimeIn);
-                } else if (typeof dateTimeIn === 'string') {
-                  dateStr = dateTimeIn.split(' ')[0].split('T')[0];
-                } else {
-                  dateStr = sheetName;
-                }
+                let dateStr = parseExcelDate(dateTimeIn, sheetName);
 
                 if (dateStr) dateSet.add(dateStr);
-                let pitInfo = resolvePITMapping(blokSeamRaw);
+                let pitInfo = resolvePITMapping(blokRaw, blokSeamRaw);
 
                 rawTickets.push({
                   ticketNo: ticketNo,
@@ -320,7 +334,6 @@
       });
     }
 
-    // FIX 3: Reset Perhitungan Bersih Saat Filter Dijalankan
     function applyFilters() {
       const selectedDate = document.getElementById('filterDate').value;
       const selectedPT = document.getElementById('filterPT').value;
@@ -345,7 +358,6 @@
         totalNettoKg += item.netto;
         ptGroup[item.ptOwner] = (ptGroup[item.ptOwner] || 0) + item.netto;
 
-        // Group Key Menggunakan Kategori Hasil Mapping
         let groupKey = `${item.ptOwner}||${item.lokasiPit}||${item.kodePit}||${item.seam}`;
         if (!pitGroup[groupKey]) {
           pitGroup[groupKey] = {
