@@ -58,7 +58,7 @@
       <i class="fa-solid fa-cloud-arrow-up text-6xl text-slate-600"></i>
       <h3 class="text-xl font-semibold text-slate-300">Belum Ada Data</h3>
       <p class="text-sm text-slate-400 max-w-md mx-auto">Silakan unggah file Excel Laporan Timbangan/Produksi</p>
-    <p> File **Tidak Akan Disimpan di Google Drive**</p>
+      <p class="text-xs text-slate-500">File **Tidak Akan Disimpan di Google Drive**</p>
     </div>
 
     <!-- Dashboard Content (Hidden by default) -->
@@ -144,7 +144,7 @@
             </tbody>
             <tfoot class="bg-slate-900 font-bold text-white border-t border-slate-700">
               <tr>
-                <td colspan="4" class="px-4 py-3 text-right">TOTAL PRODUSKI:</td>
+                <td colspan="4" class="px-4 py-3 text-right">TOTAL PRODUKSI:</td>
                 <td id="footRitase" class="px-4 py-3 text-right">0</td>
                 <td id="footNettoKg" class="px-4 py-3 text-right">0</td>
                 <td id="footNettoTon" class="px-4 py-3 text-right text-amber-400">0.00 MT</td>
@@ -166,71 +166,77 @@
   </footer>
 
   <script>
-    // Set Tahun Copyright Secara Dinamis
     document.getElementById('copyrightYear').textContent = new Date().getFullYear();
 
-    // MASUKKAN URL WEB APP GOOGLE APPS SCRIPT ANDA DI SINI (CONTOH: https://script.google.com/macros/s/AKfycbx.../exec)
     const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyKU-7O0mS0BekrlqVRTgr2qjF6mv1E60O0c6GW1ErCHNJeW0k1ueE7j_-uRQlTLqvM/exec";
 
-    // Global Raw Data & Master Rules
     let rawTickets = [];
     let masterMapping = [];
     let chartPTInstance = null;
     let chartPITInstance = null;
 
-    // Load Master Mapping dari GAS menggunakan Fetch HTTP API
     window.onload = function() {
-      if (!GAS_API_URL || GAS_API_URL.includes("AKfycbx...")) {
-        console.warn("GAS_API_URL belum diatur. Menggunakan fallback mapping lokal.");
-        return;
-      }
+      if (!GAS_API_URL || GAS_API_URL.includes("AKfycbx...")) return;
 
       fetch(`${GAS_API_URL}?action=getMapping`)
         .then(response => response.json())
         .then(res => {
           if (res.status === 'success') {
             masterMapping = res.data;
-            console.log("Master Mapping berhasil dipuat dari Google Apps Script:", masterMapping);
           }
         })
         .catch(err => console.error("Gagal mengambil Master Mapping:", err));
     };
 
-   // Mapping Rules Engine (PERBAIKAN)
-function resolvePITMapping(blokSeamRaw) {
-  if (!blokSeamRaw) return { ptOwner: "UNMAPPED", lokasiPit: "UNKNOWN", kodePit: "UNKNOWN", defaultSeam: "-" };
-  
-  let cleanVal = String(blokSeamRaw).trim();
-  
-  // 1. Cek Exact Match terlebih dahulu (Sangat presisi)
-  let exactMatch = masterMapping.find(m => m.kodePit.toLowerCase() === cleanVal.toLowerCase());
-  if (exactMatch) {
-    return exactMatch;
-  }
+    // FIX 1: Exact Match + Longest Match Sorting untuk cegah PIT 12-11 vs PIT 12-11A tertukar
+    function resolvePITMapping(blokSeamRaw) {
+      if (!blokSeamRaw) return { ptOwner: "UNMAPPED", lokasiPit: "UNKNOWN", kodePit: "UNKNOWN", defaultSeam: "-" };
+      
+      let cleanVal = String(blokSeamRaw).trim();
+      
+      // 1. Cek Exact Match persis
+      let exact = masterMapping.find(m => m.kodePit.toLowerCase() === cleanVal.toLowerCase());
+      if (exact) return exact;
 
-  // 2. Jika tidak exact match, urutkan masterMapping berdasarkan panjang kodePit terpanjang dahulu 
-  // (mencegah "PIT 12 - 11" mencuri data milik "PIT 12 - 11A")
-  let sortedMaster = [...masterMapping].sort((a, b) => b.kodePit.length - a.kodePit.length);
-  let partialMatch = sortedMaster.find(m => cleanVal.toLowerCase().includes(m.kodePit.toLowerCase()));
-  if (partialMatch) {
-    return partialMatch;
-  }
+      // 2. Sortir berdasar string terpanjang dulu (PIT 12 - 11A duluan dibanding PIT 12 - 11)
+      let sortedMaster = [...masterMapping].sort((a, b) => b.kodePit.length - a.kodePit.length);
+      let partial = sortedMaster.find(m => cleanVal.toLowerCase().includes(m.kodePit.toLowerCase()));
+      if (partial) return partial;
 
-  // 3. Fallback logic jika tidak ditemukan di master mapping
-  if (cleanVal.includes("OP -") || cleanVal.includes("MN -")) {
-    return { ptOwner: "PT MSA", lokasiPit: "OP - CEMARA", kodePit: cleanVal, defaultSeam: cleanVal };
-  } else if (cleanVal.includes("PIT 12")) {
-    return { ptOwner: "PT MSA", lokasiPit: "12 - KELAP BARAT", kodePit: cleanVal, defaultSeam: cleanVal };
-  } else if (cleanVal.includes("PIT Z")) {
-    return { ptOwner: "PT WSJ", lokasiPit: "PIT Z - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
-  } else if (cleanVal.includes("S WSJ")) {
-    return { ptOwner: "PT WSJ", lokasiPit: "PIT S - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
-  }
+      // Hardcoded Fallback (disortir terpanjang juga)
+      if (cleanVal.includes("OP -") || cleanVal.includes("MN -")) {
+        return { ptOwner: "PT MSA", lokasiPit: "OP - CEMARA", kodePit: cleanVal, defaultSeam: cleanVal };
+      } else if (cleanVal.includes("PIT 12 - 11A")) {
+        return { ptOwner: "PT MSA", lokasiPit: "12 - KELAP BARAT", kodePit: "PIT 12 - 11A", defaultSeam: cleanVal };
+      } else if (cleanVal.includes("PIT 12")) {
+        return { ptOwner: "PT MSA", lokasiPit: "12 - KELAP BARAT", kodePit: cleanVal, defaultSeam: cleanVal };
+      } else if (cleanVal.includes("PIT Z")) {
+        return { ptOwner: "PT WSJ", lokasiPit: "PIT Z - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
+      } else if (cleanVal.includes("S WSJ")) {
+        return { ptOwner: "PT WSJ", lokasiPit: "PIT S - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
+      }
 
-  return { ptOwner: "OTHER / UNMAPPED", lokasiPit: "DYNAMIC PIT", kodePit: cleanVal, defaultSeam: cleanVal };
-}
+      return { ptOwner: "OTHER / UNMAPPED", lokasiPit: "DYNAMIC PIT", kodePit: cleanVal, defaultSeam: cleanVal };
+    }
 
-    // Process Uploaded Excel File
+    // Helper Pembersih Nilai Netto (Cegah NaN / String Konkat)
+    function cleanNettoValue(val) {
+      if (typeof val === 'number') return val;
+      if (!val) return 0;
+      let cleaned = String(val).replace(/,/g, '').trim();
+      return parseFloat(cleaned) || 0;
+    }
+
+    // FIX 2: Formatting Tanggal Lokal yang Presisi (Mencegah Bias Jam/UTC)
+    function formatDateLocal(dateObj) {
+      let d = new Date(dateObj);
+      if (isNaN(d.getTime())) return "";
+      let year = d.getFullYear();
+      let month = String(d.getMonth() + 1).padStart(2, '0');
+      let day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
     function handleFileUpload(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -265,19 +271,19 @@ function resolvePITMapping(blokSeamRaw) {
               let ticketNo = row[0];
               let dateTimeIn = row[1];
               let blokSeamRaw = row[5]; 
-              let netto = parseFloat(row[10]) || 0;
+              let netto = cleanNettoValue(row[10]);
 
               if (netto > 0) {
                 let dateStr = "";
                 if (dateTimeIn instanceof Date) {
-                  dateStr = dateTimeIn.toISOString().split('T')[0];
+                  dateStr = formatDateLocal(dateTimeIn);
                 } else if (typeof dateTimeIn === 'string') {
-                  dateStr = dateTimeIn.split(' ')[0];
+                  dateStr = dateTimeIn.split(' ')[0].split('T')[0];
                 } else {
                   dateStr = sheetName;
                 }
 
-                dateSet.add(dateStr);
+                if (dateStr) dateSet.add(dateStr);
                 let pitInfo = resolvePITMapping(blokSeamRaw);
 
                 rawTickets.push({
@@ -303,7 +309,6 @@ function resolvePITMapping(blokSeamRaw) {
       reader.readAsArrayBuffer(file);
     }
 
-    // Fill Date Filter Dropdown
     function populateDateFilter(dates) {
       const select = document.getElementById('filterDate');
       select.innerHTML = '<option value="ALL">Semua Tanggal</option>';
@@ -315,7 +320,7 @@ function resolvePITMapping(blokSeamRaw) {
       });
     }
 
-    // Apply Filter & Refresh Aggregations
+    // FIX 3: Reset Perhitungan Bersih Saat Filter Dijalankan
     function applyFilters() {
       const selectedDate = document.getElementById('filterDate').value;
       const selectedPT = document.getElementById('filterPT').value;
@@ -330,7 +335,6 @@ function resolvePITMapping(blokSeamRaw) {
       updateAggregations(filtered);
     }
 
-    // Aggregation & UI Update Engine
     function updateAggregations(data) {
       let totalNettoKg = 0;
       let totalRitase = data.length;
@@ -341,6 +345,7 @@ function resolvePITMapping(blokSeamRaw) {
         totalNettoKg += item.netto;
         ptGroup[item.ptOwner] = (ptGroup[item.ptOwner] || 0) + item.netto;
 
+        // Group Key Menggunakan Kategori Hasil Mapping
         let groupKey = `${item.ptOwner}||${item.lokasiPit}||${item.kodePit}||${item.seam}`;
         if (!pitGroup[groupKey]) {
           pitGroup[groupKey] = {
@@ -396,7 +401,6 @@ function resolvePITMapping(blokSeamRaw) {
       renderCharts(ptGroup, sortedGroups);
     }
 
-    // Render Charts Engine
     function renderCharts(ptGroup, sortedGroups) {
       const ctxPT = document.getElementById('chartPT').getContext('2d');
       if (chartPTInstance) chartPTInstance.destroy();
@@ -441,7 +445,6 @@ function resolvePITMapping(blokSeamRaw) {
       });
     }
 
-    // Reset Data Function
     function resetData() {
       rawTickets = [];
       document.getElementById('excelFileInput').value = '';
@@ -449,7 +452,6 @@ function resolvePITMapping(blokSeamRaw) {
       document.getElementById('dashboardContent').classList.add('hidden');
     }
 
-    // Registrasi Service Worker untuk PWA
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js')
