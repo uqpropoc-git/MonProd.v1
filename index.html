@@ -188,25 +188,21 @@
         .catch(err => console.error("Gagal mengambil Master Mapping:", err));
     };
 
-    // FIX 1: Pemetaan PIT/Seam Akurat tanpa Merusak Nama Grup Asli
     function resolvePITMapping(blokRaw, blokSeamRaw) {
       let cleanBlok = String(blokRaw || "").trim();
       let cleanSeam = String(blokSeamRaw || "").trim();
       let combined = `${cleanBlok} ${cleanSeam}`.toUpperCase();
 
-      // 1. Cek Exact Match pada Master Mapping
       if (masterMapping && masterMapping.length > 0) {
         let exact = masterMapping.find(m => m.kodePit.toLowerCase() === cleanSeam.toLowerCase());
         if (exact) return exact;
       }
 
-      // 2. Tentukan PT Owner berdasarkan Blok & Seam
-      let owner = "PT MSA"; // Default ke MSA
+      let owner = "PT MSA";
       if (combined.includes("WSJ") || combined.includes("RCI 2 WSJ") || combined.includes("S WSJ")) {
         owner = "PT WSJ";
       }
 
-      // 3. Tentukan Lokasi PIT
       let lokasi = cleanSeam;
       if (combined.includes("WSJ")) {
         lokasi = "PIT S - WSJ";
@@ -224,23 +220,45 @@
       };
     }
 
-    // Helper Pembersih Nilai Netto (Cegah NaN / String Konkat)
+    // PEMPERBAIKAN 1: Pembersihan Angka Netto Presisi
     function cleanNettoValue(val) {
       if (typeof val === 'number') return val;
       if (!val) return 0;
-      let cleaned = String(val).replace(/,/g, '').trim();
-      return parseFloat(cleaned) || 0;
+
+      let str = String(val).trim();
+      // Tangani format ribuan dengan titik (contoh 26.915) vs desimal
+      if (str.includes('.') && !str.includes(',')) {
+        let parts = str.split('.');
+        if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+          str = str.replace(/\./g, '');
+        }
+      }
+      str = str.replace(/,/g, '');
+      return parseFloat(str) || 0;
     }
 
-    // FIX 2: Parsing Tanggal Lokal yang Presisi (Tanpa Pergeseran Timezone/UTC)
+    // PEMPERBAIKAN 2: Parsing Tanggal Lokal Akurat (Menolak Offsets Jam/UTC)
     function parseExcelDate(dateTimeIn, sheetName) {
       if (!dateTimeIn) return sheetName;
 
       if (dateTimeIn instanceof Date) {
-        let year = dateTimeIn.getFullYear();
-        let month = String(dateTimeIn.getMonth() + 1).padStart(2, '0');
-        let day = String(dateTimeIn.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+        // Gunakan nilai Jam/Tanggal asli tanpa distorsi offset timezone
+        let y = dateTimeIn.getUTCFullYear();
+        let m = dateTimeIn.getUTCMonth();
+        let d = dateTimeIn.getUTCDate();
+        let hours = dateTimeIn.getUTCHours();
+
+        // Jika mendekati jam 24/0 (karena offset -7/+8), selaraskan ke tanggal lokal
+        if (hours >= 16) {
+          let adjusted = new Date(Date.UTC(y, m, d + 1));
+          y = adjusted.getUTCFullYear();
+          m = adjusted.getUTCMonth();
+          d = adjusted.getUTCDate();
+        }
+
+        let monthStr = String(m + 1).padStart(2, '0');
+        let dayStr = String(d).padStart(2, '0');
+        return `${y}-${monthStr}-${dayStr}`;
       }
 
       if (typeof dateTimeIn === 'string') {
@@ -256,7 +274,7 @@
       return sheetName;
     }
 
-    // FIX 3: Upload dan Parsing Excel
+    // PEMPERBAIKAN 3: Parsing SheetJS Dinamis Berdasarkan Header
     function handleFileUpload(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -264,7 +282,8 @@
       const reader = new FileReader();
       reader.onload = function(e) {
         const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+        // cellDates: false untuk mencegah bug UTC Shift bawaan JS
+        const workbook = XLSX.read(data, { type: 'array', cellDates: false });
 
         rawTickets = [];
         let dateSet = new Set();
@@ -273,12 +292,26 @@
           if (["Summary", "RET tambang", "Ret Timbangan", "Total"].includes(sheetName)) return;
 
           const worksheet = workbook.Sheets[sheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
 
           let headerIdx = -1;
+          let idxTicket = 0, idxDate = 1, idxBlok = 4, idxSeam = 5, idxNetto = 10;
+
           for (let i = 0; i < jsonData.length; i++) {
-            if (jsonData[i] && jsonData[i].includes("No Ticket")) {
+            if (jsonData[i] && jsonData[i].some(c => String(c).toLowerCase().includes("ticket"))) {
               headerIdx = i;
+              const rowH = jsonData[i].map(c => String(c).toLowerCase().trim());
+              idxTicket = rowH.findIndex(c => c.includes("ticket"));
+              idxDate = rowH.findIndex(c => c.includes("date") || c.includes("tgl") || c.includes("masuk"));
+              idxBlok = rowH.findIndex(c => c.includes("blok") && !c.includes("seam"));
+              idxSeam = rowH.findIndex(c => c.includes("seam"));
+              idxNetto = rowH.findIndex(c => c.includes("netto"));
+              
+              if (idxTicket === -1) idxTicket = 0;
+              if (idxDate === -1) idxDate = 1;
+              if (idxBlok === -1) idxBlok = 4;
+              if (idxSeam === -1) idxSeam = 5;
+              if (idxNetto === -1) idxNetto = 10;
               break;
             }
           }
@@ -286,17 +319,16 @@
           if (headerIdx !== -1) {
             for (let i = headerIdx + 1; i < jsonData.length; i++) {
               const row = jsonData[i];
-              if (!row || row.length < 10 || !row[0]) continue;
+              if (!row || row.length <= idxNetto || !row[idxTicket]) continue;
 
-              let ticketNo = row[0];
-              let dateTimeIn = row[1];
-              let blokRaw = row[4];     // Kolom Blok
-              let blokSeamRaw = row[5]; // Kolom Blok/Seam
-              let netto = cleanNettoValue(row[10]);
+              let ticketNo = row[idxTicket];
+              let dateTimeIn = row[idxDate];
+              let blokRaw = row[idxBlok];
+              let blokSeamRaw = row[idxSeam];
+              let netto = cleanNettoValue(row[idxNetto]);
 
               if (netto > 0) {
                 let dateStr = parseExcelDate(dateTimeIn, sheetName);
-
                 if (dateStr) dateSet.add(dateStr);
                 let pitInfo = resolvePITMapping(blokRaw, blokSeamRaw);
 
@@ -376,7 +408,7 @@
       let totalNettoTon = totalNettoKg / 1000;
 
       document.getElementById('kpiNettoTon').innerHTML = `${totalNettoTon.toLocaleString('id-ID', {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="text-sm text-amber-500 font-normal">MT</span>`;
-      document.getElementById('kpiNettoKg').textContent = `${totalNettoKg.toLocaleString('id-ID')} Kg`;
+      document.getElementById('kpiNettoKg').textContent = `${Math.round(totalNettoKg).toLocaleString('id-ID')} Kg`;
       document.getElementById('kpiRitase').innerHTML = `${totalRitase.toLocaleString('id-ID')} <span class="text-sm text-blue-400 font-normal">Rit</span>`;
 
       let sortedGroups = Object.values(pitGroup).sort((a,b) => b.nettoKg - a.nettoKg);
@@ -400,14 +432,14 @@
           <td class="px-4 py-3">${g.kodePit}</td>
           <td class="px-4 py-3 text-slate-400">${g.seam}</td>
           <td class="px-4 py-3 text-right font-mono">${g.ritase.toLocaleString('id-ID')}</td>
-          <td class="px-4 py-3 text-right font-mono">${g.nettoKg.toLocaleString('id-ID')}</td>
+          <td class="px-4 py-3 text-right font-mono">${Math.round(g.nettoKg).toLocaleString('id-ID')}</td>
           <td class="px-4 py-3 text-right font-mono font-bold text-amber-400">${(g.nettoKg/1000).toLocaleString('id-ID', {minimumFractionDigits: 2, maximumFractionDigits: 2})} MT</td>
         `;
         tbody.appendChild(row);
       });
 
       document.getElementById('footRitase').textContent = totalRitase.toLocaleString('id-ID');
-      document.getElementById('footNettoKg').textContent = totalNettoKg.toLocaleString('id-ID');
+      document.getElementById('footNettoKg').textContent = Math.round(totalNettoKg).toLocaleString('id-ID');
       document.getElementById('footNettoTon').textContent = `${totalNettoTon.toLocaleString('id-ID', {minimumFractionDigits: 2, maximumFractionDigits: 2})} MT`;
 
       renderCharts(ptGroup, sortedGroups);
