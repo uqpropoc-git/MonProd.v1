@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coal Joint Calc - Production Report</title>
+
+  <!-- PWA & Theme Color Integration -->
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2854/2854181.png">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SheetJS (In-Memory Excel Processing) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; font-family: 'Inter', sans-serif; }
+    .glass-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Header / Navbar -->
+  <header class="glass-card sticky top-0 z-50 px-6 py-4 flex flex-wrap justify-between items-center border-b border-slate-700">
+    <div class="flex items-center space-x-3">
+      <i class="fa-solid fa-truck-ramp-box text-amber-500 text-2xl"></i>
+      <div>
+        <h1 class="text-lg font-bold leading-tight">Coal Joint Calculation</h1>
+        <p class="text-xs text-slate-400">Sistem Laporan Produksi Batubara In-Memory</p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-3 mt-2 sm:mt-0">
+      <!-- File Upload Button -->
+      <label class="cursor-pointer bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold px-4 py-2 rounded-lg text-sm flex items-center space-x-2 transition">
+        <i class="fa-solid fa-file-excel"></i>
+        <span>Upload Excel (.xlsx)</span>
+        <input type="file" id="excelFileInput" accept=".xlsx, .xls" class="hidden" onchange="handleFileUpload(event)">
+      </label>
+      <!-- Reset Button -->
+      <button onclick="resetData()" class="bg-rose-600 hover:bg-rose-700 text-white font-semibold px-4 py-2 rounded-lg text-sm flex items-center space-x-2 transition">
+        <i class="fa-solid fa-rotate-left"></i>
+        <span>Reset Data</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 p-4 md:p-6 space-y-6 max-w-7xl mx-auto w-full">
+
+    <!-- Empty State Prompt -->
+    <div id="emptyState" class="glass-card p-12 text-center rounded-2xl border-2 border-dashed border-slate-700 space-y-4">
+      <i class="fa-solid fa-cloud-arrow-up text-6xl text-slate-600"></i>
+      <h3 class="text-xl font-semibold text-slate-300">Belum Ada Data Diumpan</h3>
+      <p class="text-sm text-slate-400 max-w-md mx-auto">
+        Silakan unggah file Excel Laporan Timbangan/Produksi (.xlsx/.xls). File **tidak akan disimpan di Google Drive** dan hanya diproses sementara di memori browser.
+      </p>
+    </div>
+
+    <!-- Dashboard Content (Hidden by default) -->
+    <div id="dashboardContent" class="hidden space-y-6">
+
+      <!-- Filter Controls Bar -->
+      <div class="glass-card p-4 rounded-xl flex flex-wrap gap-4 items-center justify-between">
+        <div class="flex flex-wrap gap-4 items-center">
+          <!-- Filter Tanggal -->
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Filter Hari/Tanggal</label>
+            <select id="filterDate" onchange="applyFilters()" class="bg-slate-800 border border-slate-700 text-sm rounded-lg px-3 py-2 text-amber-400 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500">
+              <option value="ALL">Semua Tanggal</option>
+            </select>
+          </div>
+          <!-- Filter PT Owner -->
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Filter PT Owner</label>
+            <select id="filterPT" onchange="applyFilters()" class="bg-slate-800 border border-slate-700 text-sm rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+              <option value="ALL">Semua PT (MSA & WSJ)</option>
+              <option value="PT MSA">PT MSA</option>
+              <option value="PT WSJ">PT WSJ</option>
+            </select>
+          </div>
+        </div>
+        <div class="text-xs text-slate-400">
+          Total Data Parsed: <span id="recordCount" class="font-bold text-white">0</span> Tiket
+        </div>
+      </div>
+
+      <!-- KPI Scorecards -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="glass-card p-5 rounded-xl border-l-4 border-amber-500">
+          <p class="text-xs text-slate-400 font-medium">TOTAL TONASE NETTO</p>
+          <h2 class="text-2xl font-extrabold text-white mt-1" id="kpiNettoTon">0.00 <span class="text-sm text-amber-500 font-normal">MT</span></h2>
+          <p class="text-xs text-slate-400 mt-1" id="kpiNettoKg">0 Kg</p>
+        </div>
+        <div class="glass-card p-5 rounded-xl border-l-4 border-blue-500">
+          <p class="text-xs text-slate-400 font-medium">TOTAL RITASE / TRIP</p>
+          <h2 class="text-2xl font-extrabold text-white mt-1" id="kpiRitase">0 <span class="text-sm text-blue-400 font-normal">Rit</span></h2>
+          <p class="text-xs text-slate-400 mt-1">Pengiriman Timbangan</p>
+        </div>
+        <div class="glass-card p-5 rounded-xl border-l-4 border-emerald-500">
+          <p class="text-xs text-slate-400 font-medium">KONTRIBUSI UTAMA</p>
+          <h2 class="text-xl font-bold text-white mt-1 truncate" id="kpiTopPit">-</h2>
+          <p class="text-xs text-emerald-400 mt-1" id="kpiTopTon">0 MT</p>
+        </div>
+      </div>
+
+      <!-- Charts Section -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="glass-card p-5 rounded-xl">
+          <h4 class="text-sm font-semibold text-slate-300 mb-4">Produksi per PT (Tonase Netto)</h4>
+          <div class="h-64"><canvas id="chartPT"></canvas></div>
+        </div>
+        <div class="glass-card p-5 rounded-xl">
+          <h4 class="text-sm font-semibold text-slate-300 mb-4">Produksi per PIT / Seam</h4>
+          <div class="h-64"><canvas id="chartPIT"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Joint Calculation Breakdown Table -->
+      <div class="glass-card rounded-xl overflow-hidden">
+        <div class="p-4 bg-slate-800/50 border-b border-slate-700 flex justify-between items-center">
+          <h3 class="font-bold text-slate-200">Rincian Joint Calculation Laporan Produksi</h3>
+          <span class="text-xs bg-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full font-medium">Real-Time Aggregation</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-900/80 text-xs text-slate-400 uppercase border-b border-slate-700">
+              <tr>
+                <th class="px-4 py-3">PT Owner</th>
+                <th class="px-4 py-3">Lokasi PIT</th>
+                <th class="px-4 py-3">PIT / Blok</th>
+                <th class="px-4 py-3">Seam</th>
+                <th class="px-4 py-3 text-right">Ritase</th>
+                <th class="px-4 py-3 text-right">Total Netto (Kg)</th>
+                <th class="px-4 py-3 text-right">Total Netto (Ton)</th>
+              </tr>
+            </thead>
+            <tbody id="jointCalcTableBody" class="divide-y divide-slate-800">
+              <!-- Dynamic Rows -->
+            </tbody>
+            <tfoot class="bg-slate-900 font-bold text-white border-t border-slate-700">
+              <tr>
+                <td colspan="4" class="px-4 py-3 text-right">TOTAL PRODUSKI:</td>
+                <td id="footRitase" class="px-4 py-3 text-right">0</td>
+                <td id="footNettoKg" class="px-4 py-3 text-right">0</td>
+                <td id="footNettoTon" class="px-4 py-3 text-right text-amber-400">0.00 MT</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    // MASUKKAN URL WEB APP GOOGLE APPS SCRIPT ANDA DI SINI (CONTOH: https://script.google.com/macros/s/AKfycbx.../exec)
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyKU-7O0mS0BekrlqVRTgr2qjF6mv1E60O0c6GW1ErCHNJeW0k1ueE7j_-uRQlTLqvM/exec";
+
+    // Global Raw Data & Master Rules
+    let rawTickets = [];
+    let masterMapping = [];
+    let chartPTInstance = null;
+    let chartPITInstance = null;
+
+    // Load Master Mapping dari GAS menggunakan Fetch HTTP API
+    window.onload = function() {
+      if (!GAS_API_URL || GAS_API_URL.includes("AKfycbx...")) {
+        console.warn("GAS_API_URL belum diatur. Menggunakan fallback mapping lokal.");
+        return;
+      }
+
+      fetch(`${GAS_API_URL}?action=getMapping`)
+        .then(response => response.json())
+        .then(res => {
+          if (res.status === 'success') {
+            masterMapping = res.data;
+            console.log("Master Mapping berhasil dipuat dari Google Apps Script:", masterMapping);
+          }
+        })
+        .catch(err => console.error("Gagal mengambil Master Mapping:", err));
+    };
+
+    // Mapping Rules Engine
+    function resolvePITMapping(blokSeamRaw) {
+      if (!blokSeamRaw) return { ptOwner: "UNMAPPED", lokasiPit: "UNKNOWN", kodePit: "UNKNOWN", defaultSeam: "-" };
+      
+      let cleanVal = String(blokSeamRaw).trim();
+      
+      // Cek dalam Master Mapping dari Apps Script
+      let match = masterMapping.find(m => m.kodePit.toLowerCase() === cleanVal.toLowerCase() || cleanVal.toLowerCase().includes(m.kodePit.toLowerCase()));
+      
+      if (match) {
+        return match;
+      }
+
+      // Hardcoded fallback logic jika API belum terhubung/item tidak ditemukan
+      if (cleanVal.includes("OP -") || cleanVal.includes("MN -")) {
+        return { ptOwner: "PT MSA", lokasiPit: "OP - CEMARA", kodePit: cleanVal, defaultSeam: cleanVal };
+      } else if (cleanVal.includes("PIT 12")) {
+        return { ptOwner: "PT MSA", lokasiPit: "12 - KELAP BARAT", kodePit: cleanVal, defaultSeam: cleanVal };
+      } else if (cleanVal.includes("PIT Z")) {
+        return { ptOwner: "PT WSJ", lokasiPit: "PIT Z - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
+      } else if (cleanVal.includes("S WSJ")) {
+        return { ptOwner: "PT WSJ", lokasiPit: "PIT S - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
+      }
+
+      return { ptOwner: "OTHER / UNMAPPED", lokasiPit: "DYNAMIC PIT", kodePit: cleanVal, defaultSeam: cleanVal };
+    }
+
+    // Process Uploaded Excel File
+    function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+
+        rawTickets = [];
+        let dateSet = new Set();
+
+        workbook.SheetNames.forEach(sheetName => {
+          if (["Summary", "RET tambang", "Ret Timbangan", "Total"].includes(sheetName)) return;
+
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+          let headerIdx = -1;
+          for (let i = 0; i < jsonData.length; i++) {
+            if (jsonData[i] && jsonData[i].includes("No Ticket")) {
+              headerIdx = i;
+              break;
+            }
+          }
+
+          if (headerIdx !== -1) {
+            for (let i = headerIdx + 1; i < jsonData.length; i++) {
+              const row = jsonData[i];
+              if (!row || row.length < 10 || !row[0]) continue;
+
+              let ticketNo = row[0];
+              let dateTimeIn = row[1];
+              let blokSeamRaw = row[5]; 
+              let netto = parseFloat(row[10]) || 0;
+
+              if (netto > 0) {
+                let dateStr = "";
+                if (dateTimeIn instanceof Date) {
+                  dateStr = dateTimeIn.toISOString().split('T')[0];
+                } else if (typeof dateTimeIn === 'string') {
+                  dateStr = dateTimeIn.split(' ')[0];
+                } else {
+                  dateStr = sheetName;
+                }
+
+                dateSet.add(dateStr);
+                let pitInfo = resolvePITMapping(blokSeamRaw);
+
+                rawTickets.push({
+                  ticketNo: ticketNo,
+                  date: dateStr,
+                  ptOwner: pitInfo.ptOwner,
+                  lokasiPit: pitInfo.lokasiPit,
+                  kodePit: pitInfo.kodePit,
+                  seam: pitInfo.defaultSeam,
+                  netto: netto
+                });
+              }
+            }
+          }
+        });
+
+        populateDateFilter(Array.from(dateSet).sort());
+        document.getElementById('emptyState').classList.add('hidden');
+        document.getElementById('dashboardContent').classList.remove('hidden');
+        applyFilters();
+      };
+
+      reader.readAsArrayBuffer(file);
+    }
+
+    // Fill Date Filter Dropdown
+    function populateDateFilter(dates) {
+      const select = document.getElementById('filterDate');
+      select.innerHTML = '<option value="ALL">Semua Tanggal</option>';
+      dates.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d;
+        opt.textContent = d;
+        select.appendChild(opt);
+      });
+    }
+
+    // Apply Filter & Refresh Aggregations
+    function applyFilters() {
+      const selectedDate = document.getElementById('filterDate').value;
+      const selectedPT = document.getElementById('filterPT').value;
+
+      let filtered = rawTickets.filter(t => {
+        let matchDate = (selectedDate === 'ALL' || t.date === selectedDate);
+        let matchPT = (selectedPT === 'ALL' || t.ptOwner === selectedPT);
+        return matchDate && matchPT;
+      });
+
+      document.getElementById('recordCount').textContent = filtered.length;
+      updateAggregations(filtered);
+    }
+
+    // Aggregation & UI Update Engine
+    function updateAggregations(data) {
+      let totalNettoKg = 0;
+      let totalRitase = data.length;
+      let pitGroup = {};
+      let ptGroup = {};
+
+      data.forEach(item => {
+        totalNettoKg += item.netto;
+        ptGroup[item.ptOwner] = (ptGroup[item.ptOwner] || 0) + item.netto;
+
+        let groupKey = `${item.ptOwner}||${item.lokasiPit}||${item.kodePit}||${item.seam}`;
+        if (!pitGroup[groupKey]) {
+          pitGroup[groupKey] = {
+            ptOwner: item.ptOwner,
+            lokasiPit: item.lokasiPit,
+            kodePit: item.kodePit,
+            seam: item.seam,
+            ritase: 0,
+            nettoKg: 0
+          };
+        }
+        pitGroup[groupKey].ritase += 1;
+        pitGroup[groupKey].nettoKg += item.netto;
+      });
+
+      let totalNettoTon = totalNettoKg / 1000;
+
+      document.getElementById('kpiNettoTon').innerHTML = `${totalNettoTon.toLocaleString('id-ID', {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="text-sm text-amber-500 font-normal">MT</span>`;
+      document.getElementById('kpiNettoKg').textContent = `${totalNettoKg.toLocaleString('id-ID')} Kg`;
+      document.getElementById('kpiRitase').innerHTML = `${totalRitase.toLocaleString('id-ID')} <span class="text-sm text-blue-400 font-normal">Rit</span>`;
+
+      let sortedGroups = Object.values(pitGroup).sort((a,b) => b.nettoKg - a.nettoKg);
+      if (sortedGroups.length > 0) {
+        document.getElementById('kpiTopPit').textContent = `${sortedGroups[0].ptOwner} - ${sortedGroups[0].kodePit}`;
+        document.getElementById('kpiTopTon').textContent = `${(sortedGroups[0].nettoKg / 1000).toLocaleString('id-ID', {maximumFractionDigits:2})} MT`;
+      } else {
+        document.getElementById('kpiTopPit').textContent = "-";
+        document.getElementById('kpiTopTon').textContent = "0 MT";
+      }
+
+      const tbody = document.getElementById('jointCalcTableBody');
+      tbody.innerHTML = '';
+      
+      sortedGroups.forEach(g => {
+        const row = document.createElement('tr');
+        row.className = "hover:bg-slate-800/60 transition";
+        row.innerHTML = `
+          <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-xs font-semibold ${g.ptOwner === 'PT MSA' ? 'bg-amber-500/20 text-amber-400' : 'bg-blue-500/20 text-blue-400'}">${g.ptOwner}</span></td>
+          <td class="px-4 py-3 font-medium">${g.lokasiPit}</td>
+          <td class="px-4 py-3">${g.kodePit}</td>
+          <td class="px-4 py-3 text-slate-400">${g.seam}</td>
+          <td class="px-4 py-3 text-right font-mono">${g.ritase.toLocaleString('id-ID')}</td>
+          <td class="px-4 py-3 text-right font-mono">${g.nettoKg.toLocaleString('id-ID')}</td>
+          <td class="px-4 py-3 text-right font-mono font-bold text-amber-400">${(g.nettoKg/1000).toLocaleString('id-ID', {minimumFractionDigits: 2, maximumFractionDigits: 2})} MT</td>
+        `;
+        tbody.appendChild(row);
+      });
+
+      document.getElementById('footRitase').textContent = totalRitase.toLocaleString('id-ID');
+      document.getElementById('footNettoKg').textContent = totalNettoKg.toLocaleString('id-ID');
+      document.getElementById('footNettoTon').textContent = `${totalNettoTon.toLocaleString('id-ID', {minimumFractionDigits: 2, maximumFractionDigits: 2})} MT`;
+
+      renderCharts(ptGroup, sortedGroups);
+    }
+
+    // Render Charts Engine
+    function renderCharts(ptGroup, sortedGroups) {
+      const ctxPT = document.getElementById('chartPT').getContext('2d');
+      if (chartPTInstance) chartPTInstance.destroy();
+      chartPTInstance = new Chart(ctxPT, {
+        type: 'doughnut',
+        data: {
+          labels: Object.keys(ptGroup),
+          datasets: [{
+            data: Object.values(ptGroup).map(v => v / 1000),
+            backgroundColor: ['#f59e0b', '#3b82f6', '#10b981', '#6366f1']
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#f8fafc' } } }
+        }
+      });
+
+      const topPITs = sortedGroups.slice(0, 5);
+      const ctxPIT = document.getElementById('chartPIT').getContext('2d');
+      if (chartPITInstance) chartPITInstance.destroy();
+      chartPITInstance = new Chart(ctxPIT, {
+        type: 'bar',
+        data: {
+          labels: topPITs.map(g => g.kodePit),
+          datasets: [{
+            label: 'Netto (MT)',
+            data: topPITs.map(g => g.nettoKg / 1000),
+            backgroundColor: '#f59e0b'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { ticks: { color: '#94a3b8' } },
+            y: { ticks: { color: '#94a3b8' } }
+          },
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+
+    // Reset Data Function
+    function resetData() {
+      rawTickets = [];
+      document.getElementById('excelFileInput').value = '';
+      document.getElementById('emptyState').classList.remove('hidden');
+      document.getElementById('dashboardContent').classList.add('hidden');
+    }
+
+    // Registrasi Service Worker untuk PWA
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then(reg => console.log('Service Worker berhasil didaftarkan:', reg))
+          .catch(err => console.error('Pendaftaran Service Worker gagal:', err));
+      });
+    }
+  </script>
+</body>
+</html>
