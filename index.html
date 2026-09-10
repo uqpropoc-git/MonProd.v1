@@ -196,32 +196,39 @@
         .catch(err => console.error("Gagal mengambil Master Mapping:", err));
     };
 
-    // Mapping Rules Engine
-    function resolvePITMapping(blokSeamRaw) {
-      if (!blokSeamRaw) return { ptOwner: "UNMAPPED", lokasiPit: "UNKNOWN", kodePit: "UNKNOWN", defaultSeam: "-" };
-      
-      let cleanVal = String(blokSeamRaw).trim();
-      
-      // Cek dalam Master Mapping dari Apps Script
-      let match = masterMapping.find(m => m.kodePit.toLowerCase() === cleanVal.toLowerCase() || cleanVal.toLowerCase().includes(m.kodePit.toLowerCase()));
-      
-      if (match) {
-        return match;
-      }
+   // Mapping Rules Engine (PERBAIKAN)
+function resolvePITMapping(blokSeamRaw) {
+  if (!blokSeamRaw) return { ptOwner: "UNMAPPED", lokasiPit: "UNKNOWN", kodePit: "UNKNOWN", defaultSeam: "-" };
+  
+  let cleanVal = String(blokSeamRaw).trim();
+  
+  // 1. Cek Exact Match terlebih dahulu (Sangat presisi)
+  let exactMatch = masterMapping.find(m => m.kodePit.toLowerCase() === cleanVal.toLowerCase());
+  if (exactMatch) {
+    return exactMatch;
+  }
 
-      // Hardcoded fallback logic jika API belum terhubung/item tidak ditemukan
-      if (cleanVal.includes("OP -") || cleanVal.includes("MN -")) {
-        return { ptOwner: "PT MSA", lokasiPit: "OP - CEMARA", kodePit: cleanVal, defaultSeam: cleanVal };
-      } else if (cleanVal.includes("PIT 12")) {
-        return { ptOwner: "PT MSA", lokasiPit: "12 - KELAP BARAT", kodePit: cleanVal, defaultSeam: cleanVal };
-      } else if (cleanVal.includes("PIT Z")) {
-        return { ptOwner: "PT WSJ", lokasiPit: "PIT Z - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
-      } else if (cleanVal.includes("S WSJ")) {
-        return { ptOwner: "PT WSJ", lokasiPit: "PIT S - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
-      }
+  // 2. Jika tidak exact match, urutkan masterMapping berdasarkan panjang kodePit terpanjang dahulu 
+  // (mencegah "PIT 12 - 11" mencuri data milik "PIT 12 - 11A")
+  let sortedMaster = [...masterMapping].sort((a, b) => b.kodePit.length - a.kodePit.length);
+  let partialMatch = sortedMaster.find(m => cleanVal.toLowerCase().includes(m.kodePit.toLowerCase()));
+  if (partialMatch) {
+    return partialMatch;
+  }
 
-      return { ptOwner: "OTHER / UNMAPPED", lokasiPit: "DYNAMIC PIT", kodePit: cleanVal, defaultSeam: cleanVal };
-    }
+  // 3. Fallback logic jika tidak ditemukan di master mapping
+  if (cleanVal.includes("OP -") || cleanVal.includes("MN -")) {
+    return { ptOwner: "PT MSA", lokasiPit: "OP - CEMARA", kodePit: cleanVal, defaultSeam: cleanVal };
+  } else if (cleanVal.includes("PIT 12")) {
+    return { ptOwner: "PT MSA", lokasiPit: "12 - KELAP BARAT", kodePit: cleanVal, defaultSeam: cleanVal };
+  } else if (cleanVal.includes("PIT Z")) {
+    return { ptOwner: "PT WSJ", lokasiPit: "PIT Z - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
+  } else if (cleanVal.includes("S WSJ")) {
+    return { ptOwner: "PT WSJ", lokasiPit: "PIT S - WSJ", kodePit: cleanVal, defaultSeam: cleanVal };
+  }
+
+  return { ptOwner: "OTHER / UNMAPPED", lokasiPit: "DYNAMIC PIT", kodePit: cleanVal, defaultSeam: cleanVal };
+}
 
     // Process Uploaded Excel File
     function handleFileUpload(event) {
