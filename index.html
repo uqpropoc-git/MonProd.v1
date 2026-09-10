@@ -221,21 +221,19 @@
     }
 
     // PEMPERBAIKAN 1: Pembersihan Angka Netto Presisi
-    function cleanNettoValue(val) {
-      if (typeof val === 'number') return val;
-      if (!val) return 0;
+   function cleanNettoValue(val) {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
 
-      let str = String(val).trim();
-      // Tangani format ribuan dengan titik (contoh 26.915) vs desimal
-      if (str.includes('.') && !str.includes(',')) {
-        let parts = str.split('.');
-        if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
-          str = str.replace(/\./g, '');
-        }
-      }
-      str = str.replace(/,/g, '');
-      return parseFloat(str) || 0;
-    }
+  let str = String(val).trim();
+
+  // Jika format menggunakan koma sebagai desimal (contoh: 2691,50)
+  if (str.includes(',')) {
+    str = str.replace(/\./g, '').replace(',', '.');
+  }
+
+  return parseFloat(str) || 0;
+}
 
     // PEMPERBAIKAN 2: Parsing Tanggal Lokal Akurat (Menolak Offsets Jam/UTC)
     function parseExcelDate(dateTimeIn, sheetName) {
